@@ -14,9 +14,10 @@ const USE_BINARY = os.platform() !== "win32";
 
 function startServer() {
   var app = express();
-  expressWs(app);
-
+  var expWSS = expressWs(app).app;
+  var wss = expWSS.getWss('/');
   var terminals = {},
+      termList = [],
       logs = {};
 
   app.use('/xterm.css', express.static(__dirname + '/../css/xterm.css'));
@@ -55,6 +56,7 @@ function startServer() {
 
     console.log('Created terminal with PID: ' + term.pid);
     terminals[term.pid] = term;
+    termList.push(term.pid);
     logs[term.pid] = '';
     term.on('data', function(data) {
       logs[term.pid] += data;
@@ -116,7 +118,7 @@ function startServer() {
 
     term.on('data', function(data) {
       try {
-        send(data);
+        sendAll(term.pid, data);
       } catch (ex) {
         // The WebSocket is not open, ignore
       }
@@ -124,20 +126,35 @@ function startServer() {
     ws.on('message', function(msg) {
       term.write(msg);
     });
+    ws.on('closeTerm', (pid) => {
+      closeTerminal(term);
+    });
     ws.on('close', function () {
-      term.kill();
-      console.log('Closed terminal ' + term.pid);
+      console.log('Connection was closed ' + term.pid);
       // Clean things up
-      delete terminals[term.pid];
-      delete logs[term.pid];
     });
   });
 
-  var port = process.env.PORT || 3000,
+  var port = process.env.PORT || 4444,
       host = os.platform() === 'win32' ? '127.0.0.1' : '0.0.0.0';
 
   console.log('App listening to http://127.0.0.1:' + port);
   app.listen(port, host);
+
+  function closeTerminal (term) {
+    term.kill();
+    termList = termList.filter(pid => pid !== term.pid);
+
+    delete terminals[term.pid];
+    delete logs[term.pid];
+  }
+
+  function sendAll (pid, buffer) {
+    for (client of wss.clients) {
+      client.send({pid, buffer});
+    }
+  }
 }
+
 
 module.exports = startServer;
